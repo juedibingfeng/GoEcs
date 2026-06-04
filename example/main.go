@@ -60,32 +60,12 @@ func (s *MovementSystem) Update(dt time.Duration) error {
 	world := s.World()
 	sec := dt.Seconds()
 
-	// 先收集需要更新的实体，避免在迭代期间修改组件（会导致死锁）
-	type update struct {
-		entityID ecs.EntityID
-		pos      Position
-	}
-	var updates []update
-
-	_ = world.ComponentManager().IterateComponents(
-		reflect.TypeOf(Position{}),
-		func(entityID ecs.EntityID, comp ecs.Component) error {
-			pos := comp.(Position)
-			velComp, err := world.ComponentManager().GetComponent(entityID, reflect.TypeOf(Velocity{}))
-			if err != nil {
-				return nil
-			}
-			vel := velComp.(Velocity)
-			pos.X += vel.DX * sec
-			pos.Y += vel.DY * sec
-			updates = append(updates, update{entityID, pos})
-			return nil
-		},
-	)
-
-	// 迭代结束后再应用更新
-	for _, u := range updates {
-		_ = world.ComponentManager().AddComponent(u.entityID, u.pos)
+	for _, r := range ecs.Query(world, reflect.TypeOf(Position{}), reflect.TypeOf(Velocity{})) {
+		pos := r.Components[reflect.TypeOf(Position{})].(Position)
+		vel := r.Components[reflect.TypeOf(Velocity{})].(Velocity)
+		pos.X += vel.DX * sec
+		pos.Y += vel.DY * sec
+		_ = world.ComponentManager().AddComponent(r.EntityID, pos)
 	}
 	return nil
 }
@@ -180,7 +160,8 @@ func getEntityName(world ecs.World, entityID ecs.EntityID) string {
 // ==================== 主函数 ====================
 
 func main() {
-	fmt.Println("=== ecsgo 示例 ===\n")
+	fmt.Println("=== ecsgo 示例 ===")
+	fmt.Println()
 
 	// 1. 创建世界
 	world := ecs.NewWorld()
@@ -209,7 +190,9 @@ func main() {
 	fmt.Printf("创建 Enemy (ID: %d)\n", enemy)
 
 	// 4. 主循环
-	fmt.Println("\n--- 开始模拟 ---\n")
+	fmt.Println()
+	fmt.Println("--- 开始模拟 ---")
+	fmt.Println()
 	fps := float64(2)
 	dt := time.Duration(float64(time.Second) / fps)
 

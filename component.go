@@ -121,7 +121,7 @@ func (cm *componentManager) RemoveAllComponents(entityID EntityID) error {
 
 	components, exists := cm.componentsByEntity[entityID]
 	if !exists {
-		return ErrComponentNotFound
+		return nil
 	}
 
 	// 从类型映射中删除所有组件
@@ -138,18 +138,27 @@ func (cm *componentManager) RemoveAllComponents(entityID EntityID) error {
 // 遍历某种组件的所有实体
 func (cm *componentManager) IterateComponents(componentType reflect.Type, callback func(EntityID, Component) error) error {
 	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
 	if !cm.registeredTypes[componentType] {
+		cm.mu.RUnlock()
 		return ErrComponentTypeNotRegistered
 	}
+	snapshot := make([]struct {
+		id   EntityID
+		comp Component
+	}, 0, len(cm.componentsByType[componentType]))
+	for id, comp := range cm.componentsByType[componentType] {
+		snapshot = append(snapshot, struct {
+			id   EntityID
+			comp Component
+		}{id, comp})
+	}
+	cm.mu.RUnlock()
 
-	for entityID, component := range cm.componentsByType[componentType] {
-		if err := callback(entityID, component); err != nil {
+	for _, item := range snapshot {
+		if err := callback(item.id, item.comp); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -205,7 +214,7 @@ func (cm *componentManager) GetTotalComponentCount() int {
 	return total
 }
 
-// 获取组件的类型
+// TypeOf 获取组件的类型
 func TypeOf(component Component) reflect.Type {
 	t := reflect.TypeOf(component)
 	if t.Kind() == reflect.Ptr {
@@ -214,20 +223,25 @@ func TypeOf(component Component) reflect.Type {
 	return t
 }
 
-// BaseComponent 基础组件实现，嵌入后需自行实现 Type() 方法
-type BaseComponent struct{}
+// ComponentTypeOf 返回类型参数 T 的 reflect.Type，用于无需实例的类型查询
+func ComponentTypeOf[T any]() reflect.Type {
+	return reflect.TypeOf((*T)(nil)).Elem()
+}
 
-// 获取组件值的通用方法
+// RegisterComponentType 注册组件类型
+func RegisterComponentType[T Component](cm ComponentManager) error {
+	return cm.RegisterComponent(ComponentTypeOf[T]())
+}
+
+// GetComponentValue 将 Component 接口值安全转换为具体类型
 func GetComponentValue[T Component](component Component) (T, error) {
 	var zero T
 	if component == nil {
 		return zero, fmt.Errorf("component is nil")
 	}
-
 	value, ok := component.(T)
 	if !ok {
-		return zero, fmt.Errorf("component type mismatch")
+		return zero, fmt.Errorf("component type mismatch: want %T, got %T", zero, component)
 	}
-
 	return value, nil
 }

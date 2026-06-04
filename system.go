@@ -33,18 +33,19 @@ func (sm *systemManager) Register(system System) error {
 		return ErrSystemAlreadyExists
 	}
 	sm.systems[name] = system
-	sm.reorderSystems()
+	if err := sm.reorderSystems(); err != nil {
+		delete(sm.systems, name)
+		return err
+	}
 	return nil
 }
 
 // reorderSystems 按优先级和依赖关系重新排序系统
-func (sm *systemManager) reorderSystems() {
-	// 拓扑排序处理依赖关系
+func (sm *systemManager) reorderSystems() error {
 	sorted := make([]string, 0, len(sm.systems))
 	visited := make(map[string]bool)
 	tempVisited := make(map[string]bool)
 
-	// 按优先级排序
 	systemNames := make([]string, 0, len(sm.systems))
 	for name := range sm.systems {
 		systemNames = append(systemNames, name)
@@ -54,16 +55,14 @@ func (sm *systemManager) reorderSystems() {
 		return sm.systems[systemNames[i]].Priority() > sm.systems[systemNames[j]].Priority()
 	})
 
-	// 处理依赖关系
 	for _, name := range systemNames {
 		if err := sm.topologicalSort(name, visited, tempVisited, &sorted); err != nil {
-			// 如果有循环依赖，使用简单的优先级顺序
-			sm.systemsOrder = systemNames
-			return
+			return err
 		}
 	}
 
 	sm.systemsOrder = sorted
+	return nil
 }
 
 // 增加一个排序辅助
@@ -99,14 +98,11 @@ func (sm *systemManager) Unregister(name string) error {
 		return ErrSystemNotFound
 	}
 
-	//销毁系统
-	err := sm.systems[name].Destroy()
-	if err != nil {
+	if err := sm.systems[name].Destroy(); err != nil {
 		return err
 	}
 	delete(sm.systems, name)
-	sm.reorderSystems()
-	return nil
+	return sm.reorderSystems()
 }
 
 // 获取系统

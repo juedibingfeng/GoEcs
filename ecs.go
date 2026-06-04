@@ -2,7 +2,6 @@ package ecs
 
 import (
 	"reflect"
-	"sync/atomic"
 	"time"
 )
 
@@ -12,10 +11,6 @@ type EntityID uint64
 // 默认给一个特殊实体ID
 const NilEntityID EntityID = 0
 
-var (
-	nextEntityID atomic.Uint64
-)
-
 // 组件接口
 type Component interface {
 	//组件类型
@@ -24,20 +19,16 @@ type Component interface {
 
 // 系统接口
 type System interface {
-	//系统名字
+	// Name 系统名字
 	Name() string
-	//系统优先级
+	// Priority 系统优先级（越大越先执行）
 	Priority() int
-	// RequiredComponents 系统需要的组件类型
-	RequiredComponents() []reflect.Type
-	// Dependencies 系统依赖的其他系统名称
+	// Dependencies 系统依赖的其他系统名称（依赖项保证在本系统之前执行）
 	Dependencies() []string
 	// Init 初始化系统
 	Init(world World) error
-
 	// Update 系统更新逻辑
 	Update(dt time.Duration) error
-
 	// Destroy 销毁系统
 	Destroy() error
 }

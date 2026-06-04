@@ -127,7 +127,6 @@ func (w *world) RegisterSystem(system System) error {
 		return err
 	}
 
-	// 初始化系统
 	return system.Init(w)
 }
 
@@ -149,7 +148,6 @@ func (w *world) GetSystem(name string) (System, error) {
 
 // Update 更新所有系统
 func (w *world) Update(dt time.Duration) error {
-	// 只用读锁获取系统列表，不在持锁期间执行 System 以减小锁竞争
 	w.mu.RLock()
 	systems := w.systemManager.GetAll()
 	w.mu.RUnlock()
@@ -190,8 +188,8 @@ func (w *world) DestroyEntity(entityID EntityID) error {
 
 // AddComponent 安全添加组件
 func (w *world) AddComponent(entityID EntityID, component Component) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
+	if !w.entityManager.IsAlive(entityID) {
+		return ErrEntityNotFound
+	}
 	return w.componentManager.AddComponent(entityID, component)
 }

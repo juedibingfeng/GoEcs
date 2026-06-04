@@ -1,11 +1,15 @@
 package ecs
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // entityManager 实体管理器实现
 type entityManager struct {
 	alive        map[EntityID]bool
 	totalCreated int
+	nextID       atomic.Uint64
 	mu           sync.RWMutex
 }
 
@@ -18,7 +22,7 @@ func newEntityManager() EntityManager {
 
 // Create 创建新实体
 func (em *entityManager) Create() EntityID {
-	id := EntityID(nextEntityID.Add(1))
+	id := EntityID(em.nextID.Add(1))
 
 	em.mu.Lock()
 	em.alive[id] = true
