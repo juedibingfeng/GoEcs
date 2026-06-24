@@ -7,7 +7,7 @@ import (
 
 // entityManager 实体管理器实现
 type entityManager struct {
-	alive        map[EntityID]bool
+	alive        map[EntityID]struct{}
 	totalCreated int
 	nextID       atomic.Uint64
 	mu           sync.RWMutex
@@ -16,7 +16,7 @@ type entityManager struct {
 // newEntityManager 创建实体管理器
 func newEntityManager() EntityManager {
 	return &entityManager{
-		alive: make(map[EntityID]bool),
+		alive: make(map[EntityID]struct{}),
 	}
 }
 
@@ -25,7 +25,7 @@ func (em *entityManager) Create() EntityID {
 	id := EntityID(em.nextID.Add(1))
 
 	em.mu.Lock()
-	em.alive[id] = true
+	em.alive[id] = struct{}{}
 	em.totalCreated++
 	em.mu.Unlock()
 
@@ -56,8 +56,8 @@ func (em *entityManager) Destroy(entityID EntityID) error {
 func (em *entityManager) IsAlive(entityID EntityID) bool {
 	em.mu.RLock()
 	defer em.mu.RUnlock()
-
-	return em.alive[entityID]
+	_, exists := em.alive[entityID]
+	return exists
 }
 
 // GetAliveCount 获取存活实体数量

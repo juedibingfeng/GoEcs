@@ -38,10 +38,17 @@ func (cm *componentManager) RegisterComponent(componentType reflect.Type) error 
 	cm.componentsByType[componentType] = make(map[EntityID]Component)
 	return nil
 }
+func (cm *componentManager) GetComponentByID(entityID EntityID, typeID ComponentTypeID) (Component, error) {
+	componentType, exists := GetComponentType(typeID)
+	if !exists {
+		return nil, ErrComponentTypeNotRegistered
+	}
+	return cm.GetComponent(entityID, componentType)
+}
 
 // 添加组件
 func (cm *componentManager) AddComponent(entityID EntityID, component Component) error {
-	componentType := component.Type()
+	componentType := reflect.TypeOf(component)
 
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -229,8 +236,17 @@ func ComponentTypeOf[T any]() reflect.Type {
 }
 
 // RegisterComponentType 注册组件类型
-func RegisterComponentType[T Component](cm ComponentManager) error {
-	return cm.RegisterComponent(ComponentTypeOf[T]())
+func (cm *componentManager) RegisterComponentType(componentType reflect.Type) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	if cm.registeredTypes[componentType] {
+		return ErrComponentAlreadyExists
+	}
+
+	cm.registeredTypes[componentType] = true
+	cm.componentsByType[componentType] = make(map[EntityID]Component)
+	return nil
 }
 
 // GetComponentValue 将 Component 接口值安全转换为具体类型

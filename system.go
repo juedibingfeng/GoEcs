@@ -12,8 +12,9 @@ import (
 type systemManager struct {
 	systems      map[string]System
 	systemsOrder []string
-
-	mu sync.RWMutex
+	initialized  map[string]bool //是否初始化
+	orderDirty   bool            //排序延迟
+	mu           sync.RWMutex
 }
 
 // 创建系统管理器
@@ -21,6 +22,7 @@ func newSystemManager() *systemManager {
 	return &systemManager{
 		systems:      make(map[string]System),
 		systemsOrder: make([]string, 0),
+		initialized:  make(map[string]bool),
 	}
 }
 
@@ -33,15 +35,12 @@ func (sm *systemManager) Register(system System) error {
 		return ErrSystemAlreadyExists
 	}
 	sm.systems[name] = system
-	if err := sm.reorderSystems(); err != nil {
-		delete(sm.systems, name)
-		return err
-	}
+	sm.orderDirty = true
 	return nil
 }
 
 // reorderSystems 按优先级和依赖关系重新排序系统
-func (sm *systemManager) reorderSystems() error {
+func (sm *systemManager) reorderSystems() {
 	sorted := make([]string, 0, len(sm.systems))
 	visited := make(map[string]bool)
 	tempVisited := make(map[string]bool)
@@ -51,18 +50,63 @@ func (sm *systemManager) reorderSystems() error {
 		systemNames = append(systemNames, name)
 	}
 
-	sort.Slice(systemNames, func(i, j int) bool {
-		return sm.systems[systemNames[i]].Priority() > sm.systems[systemNames[j]].Priority()
-	})
-
 	for _, name := range systemNames {
 		if err := sm.topologicalSort(name, visited, tempVisited, &sorted); err != nil {
-			return err
+			// 存在循环依赖时回退到简单优先级排序
+			sort.Slice(systemNames, func(i, j int) bool {
+				return sm.systems[systemNames[i]].Priority() > sm.systems[systemNames[j]].Priority()
+			})
+			sm.systemsOrder = systemNames
+			return
 		}
 	}
 
-	sm.systemsOrder = sorted
-	return nil
+	sm.systemsOrder = sm.sortByDependencyLevel(sorted)
+}
+
+// sortByDependencyLevel 在保持依赖顺序前提下，对同级系统按优先级排序
+func (sm *systemManager) sortByDependencyLevel(sorted []string) []string {
+	depth := make(map[string]int)
+	var calcDepth func(name string) int
+	calcDepth = func(name string) int {
+		if d, ok := depth[name]; ok {
+			return d
+		}
+		maxDep := 0
+		for _, dep := range sm.systems[name].Dependencies() {
+			if _, exists := sm.systems[dep]; exists {
+				if d := calcDepth(dep); d >= maxDep {
+					maxDep = d + 1
+				}
+			}
+		}
+		depth[name] = maxDep
+		return maxDep
+	}
+	for _, name := range sorted {
+		calcDepth(name)
+	}
+
+	result := make([]string, 0, len(sorted))
+	maxDepth := 0
+	for _, d := range depth {
+		if d > maxDepth {
+			maxDepth = d
+		}
+	}
+	for d := 0; d <= maxDepth; d++ {
+		level := make([]string, 0)
+		for _, name := range sorted {
+			if depth[name] == d {
+				level = append(level, name)
+			}
+		}
+		sort.Slice(level, func(i, j int) bool {
+			return sm.systems[level[i]].Priority() > sm.systems[level[j]].Priority()
+		})
+		result = append(result, level...)
+	}
+	return result
 }
 
 // 增加一个排序辅助
@@ -93,16 +137,19 @@ func (sm *systemManager) topologicalSort(name string, visited, tempVisited map[s
 // 注销系统
 func (sm *systemManager) Unregister(name string) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if _, exists := sm.systems[name]; !exists {
+	system, exists := sm.systems[name]
+	if !exists {
+		sm.mu.Unlock()
 		return ErrSystemNotFound
 	}
-
-	if err := sm.systems[name].Destroy(); err != nil {
-		return err
-	}
 	delete(sm.systems, name)
-	return sm.reorderSystems()
+	delete(sm.initialized, name)
+	sm.orderDirty = true
+	sm.mu.Unlock()
+
+	// Destroy 在锁外调用
+	_ = system.Destroy()
+	return nil
 }
 
 // 获取系统
@@ -120,14 +167,22 @@ func (sm *systemManager) Get(name string) (System, error) {
 
 // GetAll 获取所有系统（按优先级顺序）
 func (sm *systemManager) GetAll() []System {
+	sm.mu.Lock()
+	if sm.orderDirty {
+		sm.reorderSystems()
+		sm.orderDirty = false
+	}
+	sm.mu.Unlock()
+
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
 	systems := make([]System, 0, len(sm.systemsOrder))
 	for _, name := range sm.systemsOrder {
-		systems = append(systems, sm.systems[name])
+		if sm.initialized[name] {
+			systems = append(systems, sm.systems[name])
+		}
 	}
-
 	return systems
 }
 
@@ -202,4 +257,9 @@ func (bs *BaseSystem) Destroy() error {
 
 func (bs *BaseSystem) World() World {
 	return bs.world
+}
+func (sm *systemManager) MarkInitialized(name string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.initialized[name] = true
 }

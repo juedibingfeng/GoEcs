@@ -13,8 +13,6 @@ const NilEntityID EntityID = 0
 
 // 组件接口
 type Component interface {
-	//组件类型
-	Type() reflect.Type
 }
 
 // 系统接口
@@ -25,6 +23,8 @@ type System interface {
 	Priority() int
 	// Dependencies 系统依赖的其他系统名称（依赖项保证在本系统之前执行）
 	Dependencies() []string
+	// RequiredComponents 系统所需的组件类型
+	RequiredComponents() []reflect.Type
 	// Init 初始化系统
 	Init(world World) error
 	// Update 系统更新逻辑
@@ -65,6 +65,7 @@ type ComponentManager interface {
 	// GetComponent 获取组件
 	GetComponent(entityID EntityID, componentType reflect.Type) (Component, error)
 
+	GetComponentByID(entityID EntityID, typeID ComponentTypeID) (Component, error)
 	// HasComponent 检查实体是否有某组件
 	HasComponent(entityID EntityID, componentType reflect.Type) bool
 

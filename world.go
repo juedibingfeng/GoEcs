@@ -3,6 +3,7 @@ package ecs
 import (
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -11,11 +12,12 @@ type world struct {
 	entityManager    EntityManager
 	componentManager ComponentManager
 	systemManager    *systemManager
-	mu               sync.RWMutex
-	running          bool
-	lastUpdateTime   time.Time
-	totalUpdates     int64
-	totalUpdateNano  int64
+
+	destroyed       atomic.Bool
+	lastUpdateTime  atomic.Int64
+	totalUpdates    atomic.Int64
+	totalUpdateNano atomic.Int64
+	totalCreated    atomic.Int64
 }
 
 func (w *world) Step(dt time.Duration) error {
@@ -55,19 +57,15 @@ func (w *world) Step(dt time.Duration) error {
 }
 
 func (w *world) Destroy() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.destroyed.Store(true)
 
-	w.running = false
-
-	// 销毁所有系统
 	systems := w.systemManager.GetAll()
+	entities := w.entityManager.AliveEntities()
+
 	for _, system := range systems {
 		_ = system.Destroy()
 	}
 
-	// 销毁所有实体
-	entities := w.entityManager.AliveEntities()
 	for _, entityID := range entities {
 		_ = w.entityManager.Destroy(entityID)
 		_ = w.componentManager.RemoveAllComponents(entityID)
@@ -77,23 +75,21 @@ func (w *world) Destroy() error {
 }
 
 func (w *world) Stats() WorldStats {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
+	totalUpdates := w.totalUpdates.Load()
+	totalUpdateNano := w.totalUpdateNano.Load()
 
 	var avgTime float64
-	if w.totalUpdates > 0 {
-		avgTime = float64(w.totalUpdateNano) / float64(w.totalUpdates) / 1_000_000.0 // 转换为毫秒
+	if totalUpdates > 0 {
+		avgTime = float64(totalUpdateNano) / float64(totalUpdates) / 1_000_000.0
 	}
 
-	componentCount := w.componentManager.GetTotalComponentCount()
-
 	return WorldStats{
-		TotalEntities:  w.entityManager.GetTotalCreated(),
+		TotalEntities:  int(w.totalCreated.Load()),
 		AliveEntities:  w.entityManager.GetAliveCount(),
 		TotalSystems:   w.systemManager.Count(),
 		ComponentTypes: len(w.componentManager.GetRegisteredTypes()),
-		ComponentCount: componentCount,
-		LastUpdateTime: w.lastUpdateTime.UnixMilli(),
+		ComponentCount: w.componentManager.GetTotalComponentCount(),
+		LastUpdateTime: w.lastUpdateTime.Load(),
 		AverageTime:    avgTime,
 	}
 }
@@ -104,7 +100,6 @@ func NewWorld() World {
 		entityManager:    newEntityManager(),
 		componentManager: NewComponentManager(),
 		systemManager:    newSystemManager(),
-		running:          false,
 	}
 }
 
@@ -120,14 +115,17 @@ func (w *world) ComponentManager() ComponentManager {
 
 // RegisterSystem 注册系统
 func (w *world) RegisterSystem(system System) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if err := w.systemManager.Register(system); err != nil {
 		return err
 	}
 
-	return system.Init(w)
+	if err := system.Init(w); err != nil {
+		_ = w.systemManager.Unregister(system.Name())
+		return err
+	}
+
+	w.systemManager.MarkInitialized(system.Name())
+	return nil
 }
 
 // UnregisterSystem 注销系统
