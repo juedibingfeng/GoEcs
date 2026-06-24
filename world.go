@@ -2,7 +2,6 @@ package ecs
 
 import (
 	"reflect"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -130,39 +129,40 @@ func (w *world) RegisterSystem(system System) error {
 
 // UnregisterSystem 注销系统
 func (w *world) UnregisterSystem(name string) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	return w.systemManager.Unregister(name)
 }
 
 // GetSystem 获取系统
 func (w *world) GetSystem(name string) (System, error) {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
 	return w.systemManager.Get(name)
 }
 
 // Update 更新所有系统
 func (w *world) Update(dt time.Duration) error {
-	w.mu.RLock()
-	systems := w.systemManager.GetAll()
-	w.mu.RUnlock()
+	if w.destroyed.Load() {
+		return nil
+	}
 
+	plan := w.systemManager.BuildExecutionPlan()
 	start := time.Now()
 
-	for _, system := range systems {
-		if err := system.Update(dt); err != nil {
-			return err
+	var execErr error
+	for i, group := range plan {
+		if i > 0 && w.destroyed.Load() {
+			return nil
+		}
+		if err := ExecuteGroup(group, dt); err != nil {
+			execErr = err
+			break
 		}
 	}
 
-	w.mu.Lock()
-	w.totalUpdates++
-	w.totalUpdateNano += time.Since(start).Nanoseconds()
-	w.lastUpdateTime = time.Now()
-	w.mu.Unlock()
+	if execErr != nil {
+		return execErr
+	}
+	w.totalUpdates.Add(1)
+	w.totalUpdateNano.Add(time.Since(start).Nanoseconds())
+	w.lastUpdateTime.Store(time.Now().UnixMilli())
 
 	return nil
 }
